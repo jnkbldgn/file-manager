@@ -1,11 +1,11 @@
 import readlinePromises from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
-import { sep, parse, format, isAbsolute, join } from 'node:path';
-import { access, readdir } from 'node:fs/promises';
+import { sep, parse, format, isAbsolute, join, dirname } from 'node:path';
+import { access, readdir, open } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import { homedir } from 'node:os';
 import { getArg } from "./args.js";
-import { UP, CD, LS } from './constants.js';
-import { getPath } from './helpers.js';
+import { UP, CD, LS, CAT, ADD } from './constants.js';
 
 export class App {
     #USERNAME_ARG = 'username';
@@ -39,6 +39,10 @@ export class App {
         process.exit();
     }
 
+    #normalizePath(value) {
+        return isAbsolute(value) ? value : join(this.cwd, value);
+    }
+
     #getCWDMessage() {
         return `You are currently in, ${this.cwd}\n`;
     }
@@ -61,6 +65,15 @@ export class App {
                 this.rl.write(this.#getCWDMessage());
                 break;
             }
+            case CAT: {
+                this.#cat(params[0]);
+                break;
+            }
+            case ADD: {
+                await this.#add(params[0]);
+                this.rl.write(this.#getCWDMessage());
+                break;
+            }
         }
 
     }
@@ -76,7 +89,7 @@ export class App {
         }
 
         try {
-            const pathTo = isAbsolute(to) ? to : join(this.cwd, to);
+            const pathTo = this.#normalizePath(to);
 
             await access(pathTo);
 
@@ -111,8 +124,47 @@ export class App {
         }
     }
 
+    #cat(filePath) {
+        if(!filePath) {
+            this.#errorHandler(this.#INPUT_ERROR);
+            return;
+        }
+
+        createReadStream(this.#normalizePath(filePath))
+            .on('error', (e) => this.#errorHandler(e))
+            .on('end', () => this.rl.write(this.#getCWDMessage()))
+            .pipe(stdout);
+    }
+
+    async #add(fileName) {
+        if(!fileName) {
+            return this.#errorHandler(this.#INPUT_ERROR);
+        }
+
+        const filePath = this.#normalizePath(fileName);
+
+        if(dirname(filePath) !== this.cwd) {
+            return this.#errorHandler(this.#INPUT_ERROR);
+        }
+
+        try {
+            await access(filePath);
+
+            this.#errorHandler(this.#INPUT_ERROR);
+        } catch {
+            try {
+                const file = await open(filePath, 'a+');
+
+                file.close();
+            } catch (e) {
+                this.#errorHandler(e);
+            }
+        }
+    }
+
     #errorHandler(e) {
         switch(e.code) {
+            case 'EEXIST':
             case 'ENOENT': {
                 this.rl.write(this.#INPUT_ERROR.message);
                 break;
